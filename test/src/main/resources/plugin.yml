@@ -1,0 +1,6 @@
+name: SchematicLibTest
+version: ${project.version}
+main: cx.matthew.schematiclib.test.TestPlugin
+api-version: 1.15
+commands:
+  test:
