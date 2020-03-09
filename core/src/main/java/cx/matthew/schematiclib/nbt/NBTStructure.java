@@ -1,8 +1,8 @@
 package cx.matthew.schematiclib.nbt;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 
 public class NBTStructure {
@@ -13,10 +13,7 @@ public class NBTStructure {
         this.root = root;
     }
 
-    // TODO Cache the results of this
     public Optional<Tag> getTag(String pathString) {
-        Objects.requireNonNull(pathString);
-
         String[] paths = pathString.split("\\.");
 
         TagCompound compound = root;
@@ -65,6 +62,10 @@ public class NBTStructure {
 
     public Optional<Short> getShort(String key) {
         return getShortTag(key).map(TagShort::getValue);
+    }
+
+    public Optional<Integer> getUnsignedShort(String key) {
+        return getShort(key).map(Short::toUnsignedInt);
     }
 
     public Optional<TagInt> getIntTag(String key) {
@@ -145,6 +146,40 @@ public class NBTStructure {
 
     public Optional<long[]> getLongArray(String key) {
         return getLongArrayTag(key).map(TagLongArray::getValue);
+    }
+
+    public Optional<Integer[]> getVarintArray(String key) {
+        Optional<byte[]> optionalData = getByteArray(key);
+
+        if (!optionalData.isPresent()) return Optional.empty();
+
+        List<Integer> result = new ArrayList<>();
+        byte[] data = optionalData.get();
+        int index = 0;
+        int i = 0;
+        int value = 0;
+        int varint_length = 0;
+        while (i < data.length) {
+            value = 0;
+            varint_length = 0;
+
+            while (true) {
+                value |= (data[i] & 127) << (varint_length++ * 7);
+                if (varint_length > 5) {
+                    throw new RuntimeException("VarInt too big (probably corrupted data)");
+                }
+                if ((data[i] & 128) != 128) {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+
+            result.add(index, value);
+            index++;
+        }
+
+        return Optional.of(result.toArray(new Integer[0]));
     }
 
 }

@@ -62,10 +62,6 @@ public class NBTInputStream extends DataInputStream {
         throw new InvalidNBTException("Invalid tag type");
     }
 
-    private void consumeTagEnd() throws IOException {
-        readByte();
-    }
-
     private TagByteArray readTagByteArray() throws IOException {
         int length = readInt();
         byte[] data = new byte[length];

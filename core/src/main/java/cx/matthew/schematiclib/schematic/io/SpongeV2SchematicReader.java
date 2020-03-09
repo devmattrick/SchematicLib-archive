@@ -2,10 +2,10 @@ package cx.matthew.schematiclib.schematic.io;
 
 import cx.matthew.schematiclib.container.BlockHolder;
 import cx.matthew.schematiclib.container.Palette;
+import cx.matthew.schematiclib.container.volume.ArrayBiomeVolume;
 import cx.matthew.schematiclib.container.volume.ArrayBlockVolume;
 import cx.matthew.schematiclib.container.volume.BiomeVolume;
 import cx.matthew.schematiclib.container.volume.BlockVolume;
-import cx.matthew.schematiclib.container.volume.LegacyArrayBiomeVolume;
 import cx.matthew.schematiclib.math.Vector3D;
 import cx.matthew.schematiclib.nbt.*;
 import cx.matthew.schematiclib.nbt.io.NBTInputStream;
@@ -18,6 +18,7 @@ import java.io.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public class SpongeV2SchematicReader implements SchematicReader {
 
@@ -40,60 +41,52 @@ public class SpongeV2SchematicReader implements SchematicReader {
 
         NBTStructure structure = new NBTStructure((TagCompound) tag);
 
-        int width = ReaderUtil.requireOptional(structure.getShort("Width"), "Width") & 0xFFFF;
-        int height = ReaderUtil.requireOptional(structure.getShort("Height"), "Height") & 0xFFFF;
-        int length = ReaderUtil.requireOptional(structure.getShort("Length"), "Length") & 0xFFFF;
+        int version = ReaderUtil.require(structure.getInt("Version"), "Version");
+        if (version != 2) {
+            throw new SchematicReaderException("Unsupported Sponge Schematic version: " + version);
+        }
 
-        // Read block and block entity data
+        // We only support 1.13 (1519) or above since we expect there to be "flattened" ids
+        // The Sponge Schematic format specifies the tag as (inconsistent) "Data Version", but WorldEdit uses "DataVersion"
+        int dataVersion = structure.getInt("Data Version")
+                .orElse(structure.getInt("DataVersion")
+                .orElseThrow(() -> new SchematicReaderException("Missing Data Version (or DataVersion) tag.")));
+        if (dataVersion < 1519) {
+            throw new SchematicReaderException("Only data version 1519 or above is currently supported. Provided: " + dataVersion);
+        }
+
+        int width = ReaderUtil.require(structure.getUnsignedShort("Width"), "Width");
+        int height = ReaderUtil.require(structure.getUnsignedShort("Height"), "Height");
+        int length = ReaderUtil.require(structure.getUnsignedShort("Length"), "Length");
+
+        BlockVolume blocks = readBlockVolume(structure, width, height, length);
+        Map<Vector3D, TagCompound> entities = readEntities(structure);
+        BiomeVolume biomes = readBiomeVolume(structure, width, length);
+
+        return new Schematic(blocks, entities, biomes);
+    }
+
+    private BlockVolume readBlockVolume(NBTStructure structure, int width, int height, int length) throws SchematicReaderException {
         Palette<BlockData> palette = readBlockDataPalette(structure);
         Map<Vector3D, TagCompound> blockEntities = readBlockEntities(structure);
 
         BlockVolume blocks = new ArrayBlockVolume(width, height, length);
 
-        byte[] blockData = ReaderUtil.requireOptional(structure.getByteArray("BlockData"), "BlockData");
-        int index = 0;
-        int i = 0;
-        int value = 0;
-        int varint_length = 0;
-        while (i < blockData.length) {
-            value = 0;
-            varint_length = 0;
+        Integer[] data = ReaderUtil.require(structure.getVarintArray("BlockData"), "BlockData");
+        for (int i = 0; i < data.length; i++) {
+            int y = i / (width * length);
+            int z = (i % (width * length)) / width;
+            int x = (i % (width * length)) % width;
+            BlockData state = palette.get(data[i]).get();
 
-            while (true) {
-                value |= (blockData[i] & 127) << (varint_length++ * 7);
-                if (varint_length > 5) {
-                    throw new RuntimeException("VarInt too big (probably corrupted data)");
-                }
-                if ((blockData[i] & 128) != 128) {
-                    i++;
-                    break;
-                }
-                i++;
-            }
-
-            int y = index / (width * length);
-            int z = (index % (width * length)) / width;
-            int x = (index % (width * length)) % width;
-            BlockData state = palette.get(value).get();
-
-            System.out.println(blockEntities.get(new Vector3D(x, y, z)));
-
-            blocks.set(x, y, z, new BlockHolder(state, blockEntities.get(new Vector3D(x, y, z))));
-
-            index++;
+           blocks.set(x, y, z, new BlockHolder(state, blockEntities.get(new Vector3D(x, y, z))));
         }
 
-        System.out.println();
-
-        Map<Vector3D, TagCompound> entities = readEntities(structure);
-
-        // TODO read biome data
-
-        return new Schematic(blocks, entities, null);
+        return blocks;
     }
 
     private Palette<BlockData> readBlockDataPalette(NBTStructure structure) throws SchematicReaderException {
-        Map<String, Tag> tagBlockPalette = ReaderUtil.requireOptional(structure.getCompound("Palette"), "Palette");
+        Map<String, Tag> tagBlockPalette = ReaderUtil.require(structure.getCompound("Palette"), "Palette");
 
         Palette<BlockData> blockPalette = new Palette<>();
         for (Map.Entry<String, Tag> entry : tagBlockPalette.entrySet()) {
@@ -112,7 +105,7 @@ public class SpongeV2SchematicReader implements SchematicReader {
     private Map<Vector3D, TagCompound> readBlockEntities(NBTStructure structure) throws SchematicReaderException {
         Map<Vector3D, TagCompound> blockEntities = new HashMap<>();
 
-        List<? extends Tag> blockEntitiesTag = ReaderUtil.requireOptional(structure.getList("TileEntities"), "BlockEntities");
+        List<? extends Tag> blockEntitiesTag = ReaderUtil.require(structure.getList("TileEntities"), "BlockEntities");
         for (Tag listTag : blockEntitiesTag) {
             if (!(listTag instanceof TagCompound)) {
                 Bukkit.getLogger().warning("Expected a CompoundTag for block entity, got " + listTag.toString());
@@ -149,15 +142,13 @@ public class SpongeV2SchematicReader implements SchematicReader {
             blockEntities.put(point, builder.build());
         }
 
-        blockEntities.forEach((key, value) -> System.out.println(key + " : " + value));
-
         return blockEntities;
     }
 
     private Map<Vector3D, TagCompound> readEntities(NBTStructure structure) throws SchematicReaderException {
         Map<Vector3D, TagCompound> entities = new HashMap<>();
 
-        List<? extends Tag> entitiesTag = ReaderUtil.requireOptional(structure.getList("Entities"), "Entities");
+        List<? extends Tag> entitiesTag = ReaderUtil.require(structure.getList("Entities"), "Entities");
         for (Tag listTag : entitiesTag) {
             if (!(listTag instanceof TagCompound)) {
                 Bukkit.getLogger().warning("Expected a CompoundTag for entity, got " + listTag.toString());
@@ -194,8 +185,33 @@ public class SpongeV2SchematicReader implements SchematicReader {
         return entities;
     }
 
+    private BiomeVolume readBiomeVolume(NBTStructure structure, int width, int length) throws SchematicReaderException {
+        Palette<Biome> palette = readBiomePalette(structure);
+        if (palette == null) {
+            return null;
+        }
+
+        BiomeVolume biomes = new ArrayBiomeVolume(width, 1, length);
+
+        Integer[] data = ReaderUtil.require(structure.getVarintArray("BiomeData"), "BiomeData");
+        for (int i = 0; i < data.length; i++) {
+            int z = i / width;
+            int x = i % width;
+            Biome biome = palette.get(data[i]).get();
+
+            biomes.set(x, 0, z, biome);
+        }
+
+        return biomes;
+    }
+
     private Palette<Biome> readBiomePalette(NBTStructure structure) throws SchematicReaderException {
-        Map<String, Tag> tagBiomePalette = ReaderUtil.requireOptional(structure.getCompound("BiomePalette"), "BiomePalette");
+        Optional<Map<String, Tag>> optionalTagBiomePalette = structure.getCompound("BiomePalette");;
+        if (!optionalTagBiomePalette.isPresent()) {
+            return null;
+        }
+
+        Map<String, Tag> tagBiomePalette = optionalTagBiomePalette.get();
 
         Palette<Biome> biomePalette = new Palette<>();
         for (Map.Entry<String, Tag> entry : tagBiomePalette.entrySet()) {

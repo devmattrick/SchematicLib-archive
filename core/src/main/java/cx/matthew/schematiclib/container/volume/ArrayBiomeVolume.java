@@ -12,6 +12,10 @@ public class ArrayBiomeVolume extends BiomeVolume implements ArrayVolume<Biome> 
     private Palette<Biome> palette;
     private int[] biomes;
 
+    public ArrayBiomeVolume(int width, int height, int length) {
+        this(width, height, length, new Palette<>(), new int[width * height * length]);
+    }
+
     public ArrayBiomeVolume(Vector3D dimensions, Palette<Biome> palette, int[] biomes) {
         super(dimensions);
         this.palette = palette;

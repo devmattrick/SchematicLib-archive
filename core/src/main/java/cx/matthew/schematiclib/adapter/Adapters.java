@@ -11,8 +11,6 @@ public class Adapters {
             String packageName = ISchematicAdapter.class.getPackage().getName();
             String internalsName = Bukkit.getServer().getClass().getPackage().getName().split("\\.")[3];
 
-            System.out.println(packageName + "  " + internalsName);
-
             return (ISchematicAdapter) Class.forName(packageName + "." + internalsName + ".SchematicAdapter").newInstance();
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | ClassCastException exception) {
             Bukkit.getLogger().log(Level.SEVERE, "Could not find a valid implementation for this server version.");
